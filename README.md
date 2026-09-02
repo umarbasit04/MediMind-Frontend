@@ -208,6 +208,41 @@ npm run web
 npm run typecheck
 ```
 
+### Build for hosting
+
+The frontend is exported as a static web application:
+
+```bash
+npm run build
+```
+
+The generated files are written to `dist/`. Any static hosting provider can
+serve that directory, including Vercel, Netlify, Cloudflare Pages, or an
+Nginx/Apache web server.
+
+#### Vercel
+
+This repository includes `vercel.json`, which tells Vercel to:
+
+1. Run `npm run build`
+2. Publish the generated `dist/` directory
+
+When importing the GitHub repository into Vercel, add this project environment
+variable in the Vercel project settings before deploying:
+
+```text
+EXPO_PUBLIC_API_URL=https://your-backend-url
+```
+
+The variable is embedded into the browser bundle during the build, so a new
+deployment is required after changing it.
+
+The repository intentionally does not commit a generated npm lockfile. The
+previous lockfile contained Replit-internal package-firewall URLs that are not
+reachable from Vercel or other external CI/build systems. Without that
+platform-specific lockfile, npm resolves the dependencies from the public
+registry during deployment.
+
 ## Navigation
 
 The application is organized into authenticated and unauthenticated flows.

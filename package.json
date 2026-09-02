@@ -4,6 +4,7 @@
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
+    "build": "expo export --platform web",
     "dev": "expo start --web --port 5000 --host lan",
     "web": "expo start --web --port 5000 --host lan",
     "typecheck": "tsc --noEmit"
