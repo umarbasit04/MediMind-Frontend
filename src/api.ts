@@ -86,6 +86,11 @@ export const api = {
     token: string,
     body: { name: string; relation?: string | null; phone?: string | null; email?: string | null; can_view_adherence?: boolean },
   ) => request<FamilyMember>('/api/family-members', { method: 'POST', body: JSON.stringify(body) }, token),
+  updateFamilyMember: (
+    token: string,
+    id: string,
+    body: { name: string; relation?: string | null; phone?: string | null; email?: string | null; can_view_adherence?: boolean },
+  ) => request<FamilyMember>(`/api/family-members/${id}`, { method: 'PUT', body: JSON.stringify(body) }, token),
   deleteFamilyMember: (token: string, id: string) =>
     request<{ id: string }>(`/api/family-members/${id}`, { method: 'DELETE' }, token),
   pushPublicKey: () => request<{ key: string }>('/api/push/public-key'),
