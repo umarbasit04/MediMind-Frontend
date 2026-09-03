@@ -56,4 +56,14 @@ export type EmergencyContact = {
   is_primary?: boolean;
 };
 
+export type FamilyMember = {
+  id: string;
+  name: string;
+  relation: string | null;
+  email: string | null;
+  phone: string | null;
+  can_view_adherence: boolean;
+  created_at: string;
+};
+
 export type AuthResponse = { user: User; token: string };
