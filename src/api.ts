@@ -1,4 +1,4 @@
-import { AdherenceStats, AuthResponse, EmergencyContact, Medicine, Reminder, TodayItem, User } from './types';
+import { AdherenceStats, AuthResponse, EmergencyContact, FamilyMember, Medicine, Reminder, TodayItem, User } from './types';
 
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL || '').replace(/\/$/, '');
 
@@ -74,4 +74,21 @@ export const api = {
       { method: 'POST', body: JSON.stringify({}) },
       token,
     ),
+  addContact: (token: string, body: { name: string; phone: string; relation?: string | null; is_primary?: boolean }) =>
+    request<EmergencyContact>('/api/emergency-contacts', { method: 'POST', body: JSON.stringify(body) }, token),
+  updateContact: (token: string, id: string, body: { name: string; phone: string; relation?: string | null; is_primary?: boolean }) =>
+    request<EmergencyContact>(`/api/emergency-contacts/${id}`, { method: 'PUT', body: JSON.stringify(body) }, token),
+  deleteContact: (token: string, id: string) =>
+    request<{ id: string }>(`/api/emergency-contacts/${id}`, { method: 'DELETE' }, token),
+  caretaker: (token: string) => request<FamilyMember>('/api/family-members/caretaker', {}, token),
+  familyMembers: (token: string) => request<FamilyMember[]>('/api/family-members', {}, token),
+  addFamilyMember: (
+    token: string,
+    body: { name: string; relation?: string | null; phone?: string | null; email?: string | null; can_view_adherence?: boolean },
+  ) => request<FamilyMember>('/api/family-members', { method: 'POST', body: JSON.stringify(body) }, token),
+  deleteFamilyMember: (token: string, id: string) =>
+    request<{ id: string }>(`/api/family-members/${id}`, { method: 'DELETE' }, token),
+  pushPublicKey: () => request<{ key: string }>('/api/push/public-key'),
+  pushSubscribe: (token: string, subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    request<{ subscribed: boolean }>('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }, token),
 };
