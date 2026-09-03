@@ -15,9 +15,10 @@ import {
 } from 'react-native';
 import { api, ApiError } from './src/api';
 import { BrandMark, EmptyState, ErrorState, Field, IconButton, LoadingState, Page, PrimaryButton, SectionTitle, SecondaryButton, StatusPill } from './src/components';
+import { enablePush, pushAlreadyEnabled, pushSupported } from './src/push';
 import { useAuthStore } from './src/store';
 import { colors, radii, shared } from './src/theme';
-import { AdherenceStats, EmergencyContact, Medicine, Reminder, TodayItem, User } from './src/types';
+import { AdherenceStats, EmergencyContact, FamilyMember, Medicine, Reminder, TodayItem, User } from './src/types';
 
 const AuthStack = createNativeStackNavigator();
 const AppStack = createNativeStackNavigator();
@@ -25,6 +26,16 @@ const Tab = createBottomTabNavigator();
 
 function friendlyError(error: unknown) {
   return error instanceof ApiError ? error.message : 'Something unexpected happened. Please try again.';
+}
+
+function confirmDialog(message: string): Promise<boolean> {
+  if (Platform.OS === 'web') return Promise.resolve(window.confirm(message));
+  return new Promise((resolve) =>
+    Alert.alert('Please confirm', message, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Yes', style: 'destructive', onPress: () => resolve(true) },
+    ]),
+  );
 }
 
 function Header({ title, onBack }: { title: string; onBack?: () => void }) {
@@ -80,6 +91,8 @@ function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [workingId, setWorkingId] = useState('');
+  const [pushState, setPushState] = useState<'hidden' | 'off' | 'busy' | 'on'>('hidden');
+  const [pushError, setPushError] = useState('');
   const todayLabel = useMemo(
     () => new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: '2-digit' }).toUpperCase(),
     [],
@@ -89,12 +102,21 @@ function DashboardScreen() {
     try { setItems(await api.today(token)); } catch (e) { setError(friendlyError(e)); } finally { setLoading(false); setRefreshing(false); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (Platform.OS === 'web' && pushSupported()) {
+      pushAlreadyEnabled().then((on) => setPushState(on ? 'on' : 'off')).catch(() => setPushState('off'));
+    }
+  }, []);
+  const turnOnPush = async () => {
+    setPushState('busy'); setPushError('');
+    try { await enablePush(token); setPushState('on'); } catch (e) { setPushError(e instanceof Error ? e.message : friendlyError(e)); setPushState('off'); }
+  };
   const mark = async (item: TodayItem, status: 'taken' | 'skipped') => {
     setWorkingId(item.reminder_id);
     try { await api.mark(token, item.reminder_id, status); await load(); } catch (e) { Alert.alert('Could not update dose', friendlyError(e)); } finally { setWorkingId(''); }
   };
   const greeting = user?.full_name ? `Good morning, ${user.full_name.split(' ')[0]}` : 'Good morning';
-  return <Page refreshing={refreshing} onRefresh={() => load(true)}><View style={{ alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 26 }}><View style={{ flex: 1 }}><Text style={{ color: colors.teal, fontSize: 14, fontWeight: '800', marginBottom: 6 }}>{todayLabel}</Text><Text style={shared.title}>{greeting}</Text><Text style={[shared.body, { marginTop: 6 }]}>Here’s your medication plan for today.</Text></View><View style={{ backgroundColor: colors.amberSoft, borderRadius: 28, padding: 12 }}><Ionicons color="#9B681D" name="sunny-outline" size={25} /></View></View><View style={[shared.card, { backgroundColor: colors.teal, borderColor: colors.teal, marginBottom: 24 }]}><View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }}><View><Text style={{ color: '#BEEBE7', fontSize: 14, fontWeight: '800' }}>TODAY’S CARE PLAN</Text><Text style={{ color: colors.white, fontSize: 25, fontWeight: '900', marginTop: 6 }}>{items.filter((item) => item.status === 'taken').length} of {items.length} doses taken</Text></View><View style={{ alignItems: 'center', borderColor: '#92D8D3', borderRadius: 35, borderWidth: 5, height: 70, justifyContent: 'center', width: 70 }}><Ionicons color={colors.white} name="checkmark" size={32} /></View></View><Pressable onPress={() => navigation.navigate('ReminderSettings')} style={{ alignItems: 'center', flexDirection: 'row', marginTop: 18 }}><Text style={{ color: colors.white, fontSize: 15, fontWeight: '800' }}>Manage reminders</Text><Ionicons color={colors.white} name="arrow-forward" size={18} style={{ marginLeft: 6 }} /></Pressable></View><SectionTitle eyebrow="Dose schedule" title="Today’s medicines" subtitle="Take a dose when it’s due, or skip it if needed." />{loading ? <LoadingState label="Loading today’s doses…" /> : error ? <ErrorState message={error} onRetry={() => load()} /> : items.length === 0 ? <EmptyState icon="calendar-outline" title="No doses scheduled today" body="Your day is clear. Add a medicine to start a reminder plan." /> : items.map((item) => <View key={item.reminder_id} style={[shared.card, { marginBottom: 12, opacity: item.status === 'taken' || item.status === 'skipped' ? 0.78 : 1 }]}><View style={{ alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' }}><View style={{ flex: 1 }}><Text style={{ color: colors.teal, fontSize: 15, fontWeight: '900' }}>{item.time_of_day}</Text><Text style={[shared.h2, { marginTop: 4 }]}>{item.medicine_name}</Text><Text style={[shared.body, { marginTop: 2 }]}>{item.dosage}</Text></View><StatusPill status={item.status} /></View>{item.status === 'pending' ? <View style={{ flexDirection: 'row', marginTop: 18 }}><PrimaryButton style={{ flex: 1, marginRight: 8 }} title="Taken" onPress={() => mark(item, 'taken')} loading={workingId === item.reminder_id} /><SecondaryButton style={{ flex: 1 }} title="Skip" onPress={() => mark(item, 'skipped')} /></View> : null}</View>)}</Page>;
+  return <Page refreshing={refreshing} onRefresh={() => load(true)}><View style={{ alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 26 }}><View style={{ flex: 1 }}><Text style={{ color: colors.teal, fontSize: 14, fontWeight: '800', marginBottom: 6 }}>{todayLabel}</Text><Text style={shared.title}>{greeting}</Text><Text style={[shared.body, { marginTop: 6 }]}>Here’s your medication plan for today.</Text></View><View style={{ backgroundColor: colors.amberSoft, borderRadius: 28, padding: 12 }}><Ionicons color="#9B681D" name="sunny-outline" size={25} /></View></View><View style={[shared.card, { backgroundColor: colors.teal, borderColor: colors.teal, marginBottom: 24 }]}><View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }}><View><Text style={{ color: '#BEEBE7', fontSize: 14, fontWeight: '800' }}>TODAY’S CARE PLAN</Text><Text style={{ color: colors.white, fontSize: 25, fontWeight: '900', marginTop: 6 }}>{items.filter((item) => item.status === 'taken').length} of {items.length} doses taken</Text></View><View style={{ alignItems: 'center', borderColor: '#92D8D3', borderRadius: 35, borderWidth: 5, height: 70, justifyContent: 'center', width: 70 }}><Ionicons color={colors.white} name="checkmark" size={32} /></View></View><Pressable onPress={() => navigation.navigate('ReminderSettings')} style={{ alignItems: 'center', flexDirection: 'row', marginTop: 18 }}><Text style={{ color: colors.white, fontSize: 15, fontWeight: '800' }}>Manage reminders</Text><Ionicons color={colors.white} name="arrow-forward" size={18} style={{ marginLeft: 6 }} /></Pressable></View>{pushState !== 'hidden' ? <View style={[shared.card, { marginBottom: 22 }]}>{pushState === 'on' ? <View style={{ alignItems: 'center', flexDirection: 'row' }}><Ionicons color={colors.teal} name="notifications" size={22} /><Text style={{ color: colors.tealDark, flex: 1, fontSize: 15, fontWeight: '800', marginLeft: 10 }}>Reminders are on for this device</Text></View> : <><View style={{ alignItems: 'center', flexDirection: 'row' }}><Ionicons color={colors.teal} name="notifications-outline" size={22} /><Text style={{ flex: 1, fontSize: 15, fontWeight: '800', marginLeft: 10 }}>Get a reminder when it’s time for a dose</Text></View>{pushError ? <Text style={[shared.errorText, { marginTop: 10 }]}>{pushError}</Text> : null}<PrimaryButton loading={pushState === 'busy'} onPress={turnOnPush} style={{ marginTop: 12 }} title="Enable reminders" /></>}</View> : null}<SectionTitle eyebrow="Dose schedule" title="Today’s medicines" subtitle="Take a dose when it’s due, or skip it if needed." />{loading ? <LoadingState label="Loading today’s doses…" /> : error ? <ErrorState message={error} onRetry={() => load()} /> : items.length === 0 ? <EmptyState icon="calendar-outline" title="No doses scheduled today" body="Your day is clear. Add a medicine to start a reminder plan." /> : items.map((item) => <View key={item.reminder_id} style={[shared.card, { marginBottom: 12, opacity: item.status === 'taken' || item.status === 'skipped' ? 0.78 : 1 }]}><View style={{ alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' }}><View style={{ flex: 1 }}><Text style={{ color: colors.teal, fontSize: 15, fontWeight: '900' }}>{item.time_of_day}</Text><Text style={[shared.h2, { marginTop: 4 }]}>{item.medicine_name}</Text><Text style={[shared.body, { marginTop: 2 }]}>{item.dosage}</Text></View><StatusPill status={item.status} /></View>{item.status === 'pending' ? <View style={{ flexDirection: 'row', marginTop: 18 }}><PrimaryButton style={{ flex: 1, marginRight: 8 }} title="Taken" onPress={() => mark(item, 'taken')} loading={workingId === item.reminder_id} /><SecondaryButton style={{ flex: 1 }} title="Skip" onPress={() => mark(item, 'skipped')} /></View> : null}</View>)}</Page>;
 }
 
 function MedicineListScreen() {
@@ -172,30 +194,91 @@ function ProfileScreen() {
   const [name, setName] = useState(storedUser?.full_name || '');
   const [phone, setPhone] = useState(storedUser?.phone || '');
   const [dob, setDob] = useState(storedUser?.date_of_birth || '');
+  const [caretaker, setCaretaker] = useState<FamilyMember | null>(null);
+  const [showCaretakerForm, setShowCaretakerForm] = useState(false);
+  const [ckName, setCkName] = useState('');
+  const [ckRelation, setCkRelation] = useState('');
+  const [ckPhone, setCkPhone] = useState('');
+  const [ckEmail, setCkEmail] = useState('');
+  const [ckBusy, setCkBusy] = useState(false);
+  const [ckError, setCkError] = useState('');
   const load = async (pull = false) => {
     pull ? setRefreshing(true) : setLoading(true); setError('');
-    try { const [profile, adherence] = await Promise.all([api.profile(token), api.stats(token)]); setUser(profile.user); setName(profile.user.full_name); setPhone(profile.user.phone || ''); setDob(profile.user.date_of_birth || ''); setStats(adherence); } catch (e) { setError(friendlyError(e)); } finally { setLoading(false); setRefreshing(false); }
+    try { const [profile, adherence] = await Promise.all([api.profile(token), api.stats(token)]); setUser(profile.user); setName(profile.user.full_name); setPhone(profile.user.phone || ''); setDob(profile.user.date_of_birth || ''); setStats(adherence); const caretakerResult = await api.caretaker(token).catch(() => null); setCaretaker(caretakerResult); } catch (e) { setError(friendlyError(e)); } finally { setLoading(false); setRefreshing(false); }
   };
   useEffect(() => { load(); }, []);
   const save = async () => { if (!name.trim()) return setError('Please enter your full name.'); setSaving(true); setError(''); try { const result = await api.updateProfile(token, { full_name: name.trim(), phone: phone.trim() || null, date_of_birth: dob.trim() || null }); setUser(result.user); Alert.alert('Profile saved', 'Your details are up to date.'); } catch (e) { setError(friendlyError(e)); } finally { setSaving(false); } };
+  const saveCaretaker = async () => {
+    setCkError('');
+    if (!ckName.trim()) return setCkError('Please enter the caretaker name.');
+    if (ckEmail.trim() && !/^\S+@\S+\.\S+$/.test(ckEmail.trim())) return setCkError('Please enter a valid email, or leave it empty.');
+    setCkBusy(true);
+    try {
+      const member = await api.addFamilyMember(token, { name: ckName.trim(), relation: ckRelation.trim() || null, phone: ckPhone.trim() || null, email: ckEmail.trim() || null, can_view_adherence: true });
+      setCaretaker(member); setShowCaretakerForm(false); setCkName(''); setCkRelation(''); setCkPhone(''); setCkEmail('');
+    } catch (e) { setCkError(friendlyError(e)); } finally { setCkBusy(false); }
+  };
   if (loading) return <Page><Header title="My profile" /><LoadingState label="Loading your profile…" /></Page>;
   if (error && !user) return <Page><Header title="My profile" /><ErrorState message={error} onRetry={() => load()} /></Page>;
-  return <Page refreshing={refreshing} onRefresh={() => load(true)}><Header title="My profile" /><View style={{ alignItems: 'center', marginBottom: 24 }}><View style={{ alignItems: 'center', backgroundColor: colors.tealSoft, borderRadius: 44, height: 88, justifyContent: 'center', width: 88 }}><Text style={{ color: colors.tealDark, fontSize: 32, fontWeight: '900' }}>{(user?.full_name || 'M').charAt(0).toUpperCase()}</Text></View><Text style={[shared.h2, { marginTop: 12 }]}>{user?.full_name}</Text><Text style={shared.body}>{user?.email}</Text></View>{stats ? <View style={[shared.card, { marginBottom: 20 }]}><Text style={[shared.h2, { marginBottom: 16 }]}>Your adherence</Text><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>{[['rate_percent', `${stats.rate_percent}%`, 'on track'], ['streak_days', `${stats.streak_days}`, 'day streak'], ['taken', `${stats.taken}`, 'taken']].map(([key, value, label]) => <View key={key} style={{ alignItems: 'center', flex: 1 }}><Text style={{ color: colors.teal, fontSize: 27, fontWeight: '900' }}>{value}</Text><Text style={[shared.caption, { marginTop: 3 }]}>{label}</Text></View>)}</View></View> : <EmptyState icon="stats-chart-outline" title="No adherence stats yet" body="Your progress will appear after you log a dose." />}{error ? <Text style={[shared.errorText, { marginBottom: 15 }]}>{error}</Text> : null}<View style={shared.card}><Text style={[shared.h2, { marginBottom: 18 }]}>Personal details</Text><Field label="Full name" onChangeText={setName} value={name} /><Field keyboardType="phone-pad" label="Phone (optional)" onChangeText={setPhone} value={phone} /><Field label="Date of birth (optional)" onChangeText={setDob} placeholder="YYYY-MM-DD" value={dob} /><PrimaryButton loading={saving} onPress={save} title="Save changes" /></View><SecondaryButton onPress={signOut} title="Sign out" style={{ marginTop: 18 }} /></Page>;
+  return <Page refreshing={refreshing} onRefresh={() => load(true)}><Header title="My profile" /><View style={{ alignItems: 'center', marginBottom: 24 }}><View style={{ alignItems: 'center', backgroundColor: colors.tealSoft, borderRadius: 44, height: 88, justifyContent: 'center', width: 88 }}><Text style={{ color: colors.tealDark, fontSize: 32, fontWeight: '900' }}>{(user?.full_name || 'M').charAt(0).toUpperCase()}</Text></View><Text style={[shared.h2, { marginTop: 12 }]}>{user?.full_name}</Text><Text style={shared.body}>{user?.email}</Text></View>{stats ? <View style={[shared.card, { marginBottom: 20 }]}><Text style={[shared.h2, { marginBottom: 16 }]}>Your adherence</Text><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>{[['rate_percent', `${stats.rate_percent}%`, 'on track'], ['streak_days', `${stats.streak_days}`, 'day streak'], ['taken', `${stats.taken}`, 'taken']].map(([key, value, label]) => <View key={key} style={{ alignItems: 'center', flex: 1 }}><Text style={{ color: colors.teal, fontSize: 27, fontWeight: '900' }}>{value}</Text><Text style={[shared.caption, { marginTop: 3 }]}>{label}</Text></View>)}</View></View> : <EmptyState icon="stats-chart-outline" title="No adherence stats yet" body="Your progress will appear after you log a dose." />}{error ? <Text style={[shared.errorText, { marginBottom: 15 }]}>{error}</Text> : null}<View style={shared.card}><Text style={[shared.h2, { marginBottom: 18 }]}>Personal details</Text><Field label="Full name" onChangeText={setName} value={name} /><Field keyboardType="phone-pad" label="Phone (optional)" onChangeText={setPhone} value={phone} /><Field label="Date of birth (optional)" onChangeText={setDob} placeholder="YYYY-MM-DD" value={dob} /><PrimaryButton loading={saving} onPress={save} title="Save changes" /></View><View style={[shared.card, { marginTop: 18 }]}><Text style={[shared.h2, { marginBottom: 6 }]}>Your caretaker</Text><Text style={[shared.body, { marginBottom: 14 }]}>Receives an email alert when you press SOS.</Text>{caretaker ? <View style={{ alignItems: 'center', flexDirection: 'row' }}><View style={{ alignItems: 'center', backgroundColor: colors.tealSoft, borderRadius: 23, height: 46, justifyContent: 'center', width: 46 }}><Ionicons color={colors.teal} name="heart-outline" size={23} /></View><View style={{ flex: 1, marginLeft: 13 }}><Text style={shared.h2}>{caretaker.name}</Text><Text style={[shared.body, { marginTop: 2 }]}>{[caretaker.relation, caretaker.phone, caretaker.email].filter(Boolean).join(' • ')}</Text></View></View> : showCaretakerForm ? <View><Field label="Caretaker name" onChangeText={setCkName} value={ckName} /><Field label="Relation (optional)" onChangeText={setCkRelation} placeholder="e.g. Daughter" value={ckRelation} /><Field keyboardType="phone-pad" label="Phone (optional)" onChangeText={setCkPhone} value={ckPhone} /><Field autoCapitalize="none" keyboardType="email-address" label="Email (for SOS alerts)" onChangeText={setCkEmail} placeholder="caretaker@example.com" value={ckEmail} />{ckError ? <Text style={[shared.errorText, { marginBottom: 12 }]}>{ckError}</Text> : null}<PrimaryButton loading={ckBusy} onPress={saveCaretaker} title="Save caretaker" /><SecondaryButton onPress={() => setShowCaretakerForm(false)} style={{ marginTop: 10 }} title="Cancel" /></View> : <><Text style={[shared.body, { marginBottom: 12 }]}>No caretaker added yet.</Text><SecondaryButton onPress={() => setShowCaretakerForm(true)} title="Add caretaker" /></>}</View><SecondaryButton onPress={signOut} title="Sign out" style={{ marginTop: 18 }} /></Page>;
 }
 
 function SosScreen() {
+  const navigation = useNavigation<any>();
   const token = useAuthStore((s) => s.token)!;
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
   const [message, setMessage] = useState('');
+  const [caretaker, setCaretaker] = useState<FamilyMember | null>(null);
   const load = async (pull = false) => { pull ? setRefreshing(true) : setLoading(true); setError(''); try { setContacts(await api.contacts(token)); } catch (e) { setError(friendlyError(e)); } finally { setLoading(false); setRefreshing(false); } };
-  useEffect(() => { load(); }, []);
-  const sendSos = async () => { setSent(false); setMessage(''); try { const result = await api.sos(token); setMessage(result.message); setContacts(result.contacts); setSent(true); } catch (e) { setError(friendlyError(e)); } };
+  useEffect(() => { load(); api.caretaker(token).then(setCaretaker).catch(() => setCaretaker(null)); }, []);
+  const sendSos = async () => { const ok = await confirmDialog('Send an emergency alert to your caretaker and trusted contacts?'); if (!ok) return; setSent(false); setMessage(''); setSending(true); try { const result = await api.sos(token); setMessage(`Alert sent to ${caretaker?.name || 'your care team'}`); setContacts(result.contacts); setSent(true); } catch (e) { setError(friendlyError(e)); } finally { setSending(false); } };
   const call = (phone: string) => { if (Platform.OS === 'web') window.open(`tel:${phone}`, '_self'); else Linking.openURL(`tel:${phone}`); };
-  return <Page refreshing={refreshing} onRefresh={() => load(true)}><View style={{ alignItems: 'center', marginBottom: 24 }}><View style={{ alignItems: 'center', flexDirection: 'row', marginBottom: 19, width: '100%' }}><View style={{ flex: 1 }}><Text style={shared.title}>Emergency SOS</Text><Text style={[shared.body, { marginTop: 6 }]}>One tap to bring your trusted contacts close.</Text></View><View style={{ backgroundColor: colors.redSoft, borderRadius: 24, padding: 12 }}><Ionicons color={colors.red} name="shield-checkmark-outline" size={25} /></View></View><Pressable accessibilityRole="button" onPress={sendSos} style={({ pressed }) => [{ alignItems: 'center', backgroundColor: colors.coral, borderColor: '#F7B2A1', borderRadius: 120, borderWidth: 8, height: 210, justifyContent: 'center', shadowColor: colors.coralDark, shadowOffset: { height: 8, width: 0 }, shadowOpacity: 0.25, shadowRadius: 14, width: 210 }, pressed && { opacity: 0.84, transform: [{ scale: 0.98 }] }]}><Ionicons color={colors.white} name="alert" size={42} /><Text style={{ color: colors.white, fontSize: 31, fontWeight: '900', marginTop: 5 }}>SOS</Text><Text style={{ color: '#FFE7E1', fontSize: 13, fontWeight: '800', marginTop: 2 }}>TAP FOR HELP</Text></Pressable></View>{sent ? <View style={[shared.card, { backgroundColor: colors.tealSoft, borderColor: '#A8DEDA', marginBottom: 20 }]}><View style={{ alignItems: 'center', flexDirection: 'row' }}><Ionicons color={colors.tealDark} name="checkmark-circle" size={24} /><Text style={{ color: colors.tealDark, flex: 1, fontSize: 16, fontWeight: '800', marginLeft: 10 }}>{message}</Text></View></View> : null}<SectionTitle eyebrow="Trusted contacts" title="Call someone now" subtitle="These are the people your care team can reach in an emergency." />{loading ? <LoadingState label="Loading emergency contacts…" /> : error ? <ErrorState message={error} onRetry={() => load()} /> : contacts.length === 0 ? <EmptyState icon="people-outline" title="No emergency contacts yet" body="Ask a family member or care partner to be added as a contact." /> : contacts.map((contact, index) => <View key={`${contact.phone}-${index}`} style={[shared.card, { marginBottom: 12 }]}><View style={{ alignItems: 'center', flexDirection: 'row' }}><View style={{ alignItems: 'center', backgroundColor: colors.amberSoft, borderRadius: 23, height: 46, justifyContent: 'center', width: 46 }}><Ionicons color="#9B681D" name="person-outline" size={23} /></View><View style={{ flex: 1, marginLeft: 13 }}><Text style={shared.h2}>{contact.name}</Text><Text style={shared.body}>{contact.relation} • {contact.phone}</Text></View><Pressable accessibilityRole="button" onPress={() => call(contact.phone)} style={{ alignItems: 'center', backgroundColor: colors.teal, borderRadius: radii.sm, flexDirection: 'row', minHeight: 46, paddingHorizontal: 13 }}><Ionicons color={colors.white} name="call" size={18} /><Text style={{ color: colors.white, fontSize: 15, fontWeight: '800', marginLeft: 6 }}>Call now</Text></Pressable></View></View>)}</Page>;
+  return <Page refreshing={refreshing} onRefresh={() => load(true)}><View style={{ alignItems: 'center', marginBottom: 24 }}><View style={{ alignItems: 'center', flexDirection: 'row', marginBottom: 19, width: '100%' }}><View style={{ flex: 1 }}><Text style={shared.title}>Emergency SOS</Text><Text style={[shared.body, { marginTop: 6 }]}>One tap to bring your trusted contacts close.</Text></View><View style={{ backgroundColor: colors.redSoft, borderRadius: 24, padding: 12 }}><Ionicons color={colors.red} name="shield-checkmark-outline" size={25} /></View></View><Pressable accessibilityRole="button" disabled={sending} onPress={sendSos} style={({ pressed }) => [{ alignItems: 'center', backgroundColor: colors.coral, borderColor: '#F7B2A1', borderRadius: 120, borderWidth: 8, height: 210, justifyContent: 'center', shadowColor: colors.coralDark, shadowOffset: { height: 8, width: 0 }, shadowOpacity: 0.25, shadowRadius: 14, width: 210 }, pressed && { opacity: 0.84, transform: [{ scale: 0.98 }] }]}><Ionicons color={colors.white} name="alert" size={42} /><Text style={{ color: colors.white, fontSize: 31, fontWeight: '900', marginTop: 5 }}>SOS</Text><Text style={{ color: '#FFE7E1', fontSize: 13, fontWeight: '800', marginTop: 2 }}>TAP FOR HELP</Text></Pressable></View>{sent ? <View style={[shared.card, { backgroundColor: colors.tealSoft, borderColor: '#A8DEDA', marginBottom: 20 }]}><View style={{ alignItems: 'center', flexDirection: 'row' }}><Ionicons color={colors.tealDark} name="checkmark-circle" size={24} /><Text style={{ color: colors.tealDark, flex: 1, fontSize: 16, fontWeight: '800', marginLeft: 10 }}>{message}</Text></View></View> : null}<SectionTitle eyebrow="Trusted contacts" title="Call someone now" subtitle="These are the people your care team can reach in an emergency." /><SecondaryButton onPress={() => navigation.navigate('Contacts')} style={{ marginBottom: 16 }} title="Add / manage contacts" />{loading ? <LoadingState label="Loading emergency contacts…" /> : error ? <ErrorState message={error} onRetry={() => load()} /> : contacts.length === 0 ? <EmptyState icon="people-outline" title="No emergency contacts yet" body="Ask a family member or care partner to be added as a contact." /> : contacts.map((contact, index) => <View key={`${contact.phone}-${index}`} style={[shared.card, { marginBottom: 12 }]}><View style={{ alignItems: 'center', flexDirection: 'row' }}><View style={{ alignItems: 'center', backgroundColor: colors.amberSoft, borderRadius: 23, height: 46, justifyContent: 'center', width: 46 }}><Ionicons color="#9B681D" name="person-outline" size={23} /></View><View style={{ flex: 1, marginLeft: 13 }}><Text style={shared.h2}>{contact.name}</Text><Text style={shared.body}>{contact.relation} • {contact.phone}</Text></View><Pressable accessibilityRole="button" onPress={() => call(contact.phone)} style={{ alignItems: 'center', backgroundColor: colors.teal, borderRadius: radii.sm, flexDirection: 'row', minHeight: 46, paddingHorizontal: 13 }}><Ionicons color={colors.white} name="call" size={18} /><Text style={{ color: colors.white, fontSize: 15, fontWeight: '800', marginLeft: 6 }}>Call now</Text></Pressable></View></View>)}</Page>;
+}
+
+function ContactsScreen() {
+  const navigation = useNavigation<any>();
+  const token = useAuthStore((s) => s.token)!;
+  const [contacts, setContacts] = useState<EmergencyContact[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<EmergencyContact | null>(null);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [relation, setRelation] = useState('');
+  const [isPrimary, setIsPrimary] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState('');
+  const load = async () => { setLoading(true); setError(''); try { setContacts(await api.contacts(token)); } catch (e) { setError(friendlyError(e)); } finally { setLoading(false); } };
+  useEffect(() => { load(); }, []);
+  const openNew = () => { setEditing(null); setName(''); setPhone(''); setRelation(''); setIsPrimary(false); setFormError(''); setFormOpen(true); };
+  const openEdit = (contact: EmergencyContact) => { setEditing(contact); setName(contact.name); setPhone(contact.phone); setRelation(contact.relation || ''); setIsPrimary(Boolean(contact.is_primary)); setFormError(''); setFormOpen(true); };
+  const save = async () => {
+    setFormError('');
+    if (!name.trim()) return setFormError('Please enter a name.');
+    if (!phone.trim()) return setFormError('Please enter a phone number.');
+    setBusy(true);
+    const body = { name: name.trim(), phone: phone.trim(), relation: relation.trim() || null, is_primary: isPrimary };
+    try {
+      if (editing?.id) await api.updateContact(token, editing.id, body);
+      else await api.addContact(token, body);
+      setFormOpen(false);
+      await load();
+    } catch (e) { setFormError(friendlyError(e)); } finally { setBusy(false); }
+  };
+  const remove = async (contact: EmergencyContact) => {
+    if (!contact.id) return;
+    const ok = await confirmDialog(`Remove ${contact.name} from your emergency contacts?`);
+    if (!ok) return;
+    try { await api.deleteContact(token, contact.id); await load(); } catch (e) { setError(friendlyError(e)); }
+  };
+  return <Page><Header title="Emergency contacts" onBack={() => navigation.goBack()} /><Text style={[shared.body, { marginBottom: 20 }]}>These people are one tap away when you press SOS. Keep at least one.</Text>{loading ? <LoadingState label="Loading contacts…" /> : error ? <ErrorState message={error} onRetry={load} /> : contacts.length === 0 ? <EmptyState icon="people-outline" title="No emergency contacts yet" body="Add a family member, friend, or doctor so SOS can reach someone." /> : contacts.map((contact) => <View key={contact.id || contact.phone} style={[shared.card, { marginBottom: 12 }]}><View style={{ alignItems: 'center', flexDirection: 'row' }}><View style={{ flex: 1 }}><Text style={shared.h2}>{contact.name}{contact.is_primary ? ' • Primary' : ''}</Text><Text style={[shared.body, { marginTop: 2 }]}>{contact.relation ? `${contact.relation} • ` : ''}{contact.phone}</Text></View><IconButton icon="create-outline" label={`Edit ${contact.name}`} onPress={() => openEdit(contact)} /><IconButton icon="trash-outline" label={`Remove ${contact.name}`} onPress={() => remove(contact)} /></View></View>)}{formOpen ? <View style={[shared.card, { marginBottom: 14 }]}><Text style={[shared.h2, { marginBottom: 14 }]}>{editing?.id ? 'Edit contact' : 'Add contact'}</Text><Field label="Full name" onChangeText={setName} value={name} /><Field keyboardType="phone-pad" label="Phone number" onChangeText={setPhone} value={phone} /><Field label="Relation (optional)" onChangeText={setRelation} placeholder="e.g. Daughter, Doctor" value={relation} /><Pressable accessibilityRole="switch" accessibilityState={{ checked: isPrimary }} onPress={() => setIsPrimary(!isPrimary)} style={{ alignItems: 'center', flexDirection: 'row', marginBottom: 16 }}><View style={{ backgroundColor: isPrimary ? colors.teal : '#B9C7CA', borderRadius: 16, height: 32, justifyContent: 'center', padding: 3, width: 52 }}><View style={{ alignSelf: isPrimary ? 'flex-end' : 'flex-start', backgroundColor: colors.white, borderRadius: 13, height: 26, width: 26 }} /></View><Text style={[shared.body, { marginLeft: 12 }]}>Primary contact</Text></Pressable>{formError ? <Text style={[shared.errorText, { marginBottom: 12 }]}>{formError}</Text> : null}<PrimaryButton loading={busy} onPress={save} title={editing?.id ? 'Save changes' : 'Add contact'} /><SecondaryButton onPress={() => setFormOpen(false)} style={{ marginTop: 10 }} title="Cancel" /></View> : <PrimaryButton onPress={openNew} title="Add emergency contact" /></Page>;
 }
 
 function TabNavigator() {
@@ -203,7 +286,7 @@ function TabNavigator() {
 }
 
 function AuthenticatedStack() {
-  return <AppStack.Navigator screenOptions={{ headerShown: false }}><AppStack.Screen name="MainTabs" component={TabNavigator} /><AppStack.Screen name="AddMedicine" component={AddMedicineScreen} /><AppStack.Screen name="ReminderSettings" component={ReminderSettingsScreen} /></AppStack.Navigator>;
+  return <AppStack.Navigator screenOptions={{ headerShown: false }}><AppStack.Screen name="MainTabs" component={TabNavigator} /><AppStack.Screen name="AddMedicine" component={AddMedicineScreen} /><AppStack.Screen name="ReminderSettings" component={ReminderSettingsScreen} /><AppStack.Screen name="Contacts" component={ContactsScreen} /></AppStack.Navigator>;
 }
 
 export default function App() {
